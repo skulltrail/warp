@@ -1,0 +1,20 @@
+{
+  "name": "warp",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Browser extension for siphoning magnet, torrent, and NZB downloads to remote clients.",
+  "scripts": {
+    "lint": "eslint .",
+    "test": "node --test",
+    "build": "node scripts/build-release.mjs",
+    "ci": "npm run lint && npm test && npm run build",
+    "prepare": "git rev-parse && git config core.hooksPath .githooks || true"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "eslint": "^9.38.0",
+    "globals": "^16.4.0"
+  }
+}
