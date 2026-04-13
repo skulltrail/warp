@@ -3,23 +3,45 @@
   "name": "warp",
   "version": "1.0.0",
   "description": "Seamlessly siphons magnet links, .torrent, and .nzb downloads to remote clients.",
-  "permissions": ["storage", "downloads", "notifications", "alarms", "tabs", "scripting", "declarativeNetRequest"],
-  "host_permissions": ["<all_urls>"],
+  "permissions": [
+    "storage",
+    "downloads",
+    "notifications",
+    "alarms",
+    "tabs",
+    "scripting",
+    "declarativeNetRequest"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
   "background": {
     "service_worker": "src/background.js",
     "type": "module"
   },
   "content_scripts": [
     {
-      "matches": ["<all_urls>"],
-      "js": ["src/content.js"],
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "src/content.js"
+      ],
       "run_at": "document_start"
     }
   ],
   "web_accessible_resources": [
     {
-      "resources": ["assets/warp.png", "assets/icon-16.png", "assets/icon-32.png", "assets/icon-48.png", "assets/icon-128.png"],
-      "matches": ["<all_urls>"]
+      "resources": [
+        "assets/warp.png",
+        "assets/icon-16.png",
+        "assets/icon-32.png",
+        "assets/icon-48.png",
+        "assets/icon-128.png"
+      ],
+      "matches": [
+        "<all_urls>"
+      ]
     }
   ],
   "action": {
