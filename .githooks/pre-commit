@@ -1,0 +1,11 @@
+#!/usr/bin/env sh
+set -eu
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+
+printf '%s\n' 'Running npm run lint'
+npm run lint
+
+printf '%s\n' 'Running npm test'
+npm test
