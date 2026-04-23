@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.0](https://github.com/skulltrail/warp/compare/warp-v1.0.0...warp-v1.1.0) (2026-04-23)
+
+
+### Features
+
+* **popup:** update qbit URL placeholder and add URL formatting function ([d9c17f3](https://github.com/skulltrail/warp/commit/d9c17f397ac99d5bbfa1f0dc7e0b47843630b675))
+
 ## [1.0.0](https://github.com/skulltrail/warp/releases/tag/warp-v1.0.0) (2026-04-13)
 
 
