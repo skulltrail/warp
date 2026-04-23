@@ -812,6 +812,10 @@ document.addEventListener('DOMContentLoaded', () => {
     return `http://${trimmed.replace(/\/+$/, '')}`;
   }
 
+  function formatVisibleUrl(url) {
+    return (url || '').trim().replace(/\/+$/, '');
+  }
+
   function getBackendTestSignature(client, values = getClientTestValues(client)) {
     return JSON.stringify({
       url: normalizeDisplayUrl(values.url),
@@ -1020,15 +1024,15 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function renderDashboardEndpoint(client, endpointEl) {
-    const normalized = normalizeDisplayUrl(getClientUrlValue(client));
+    const visibleUrl = formatVisibleUrl(getClientUrlValue(client));
     const endpointWrap = endpointEl.parentElement;
-    if (!normalized) {
+    if (!visibleUrl) {
       endpointEl.textContent = '';
       endpointWrap.hidden = true;
       return;
     }
 
-    endpointEl.textContent = normalized;
+    endpointEl.textContent = visibleUrl;
     endpointWrap.hidden = false;
   }
 
