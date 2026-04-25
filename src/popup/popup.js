@@ -101,7 +101,7 @@ document.addEventListener('DOMContentLoaded', () => {
   let logsListScrollTop = 0;
   let confirmResolver = null;
   let themeMode = 'system';
-  let notificationsEnabled = true;
+  let notificationsEnabled = false;
   let pageToastsEnabled = true;
   let confirmDangerActions = true;
   const editorState = {
@@ -503,7 +503,7 @@ document.addEventListener('DOMContentLoaded', () => {
       sabKey: '',
       sabEnabled: true,
       themeMode: 'system',
-      notificationsEnabled: true,
+      notificationsEnabled: false,
       pageToastsEnabled: true,
       confirmDangerActions: true,
     };
@@ -534,9 +534,9 @@ document.addEventListener('DOMContentLoaded', () => {
           themeMode = 'system';
           confirmDangerActions = true;
           settingThemeMode.value = themeMode;
-          notificationsEnabled = true;
+          notificationsEnabled = false;
           pageToastsEnabled = true;
-          settingNotifications.checked = true;
+          settingNotifications.checked = false;
           settingPageToasts.checked = true;
           settingConfirmActions.checked = true;
           applyResolvedTheme();
@@ -600,7 +600,7 @@ document.addEventListener('DOMContentLoaded', () => {
           sabKey: '',
           sabEnabled: true,
           themeMode: 'system',
-          notificationsEnabled: true,
+          notificationsEnabled: false,
           pageToastsEnabled: true,
           confirmDangerActions: true,
         },

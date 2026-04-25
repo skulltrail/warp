@@ -98,6 +98,8 @@ function loadBackgroundScript(configOverrides = {}) {
   const fetchCalls = [];
   const canceledDownloads = [];
   const downloadItems = new Map();
+  const notificationCreates = [];
+  const tabMessages = [];
   let onMessageListener = null;
   let onCreatedListener = null;
   let onChangedListener = null;
@@ -156,7 +158,9 @@ function loadBackgroundScript(configOverrides = {}) {
         },
       },
       notifications: {
-        create: () => {},
+        create: (...args) => {
+          notificationCreates.push(args);
+        },
       },
       runtime: {
         getURL: (resource) => resource,
@@ -188,14 +192,24 @@ function loadBackgroundScript(configOverrides = {}) {
               return;
             }
 
-            callback(cloneDefaults(keys));
+            const defaults = cloneDefaults(keys);
+            const merged = { ...defaults };
+            Object.keys(defaults).forEach((key) => {
+              if (Object.prototype.hasOwnProperty.call(config, key)) {
+                merged[key] = config[key];
+              }
+            });
+            callback(merged);
           },
           remove: () => {},
         },
       },
       tabs: {
         query: (_queryInfo, callback) => callback([]),
-        sendMessage: (_tabId, _message, callback) => callback?.(),
+        sendMessage: (tabId, message, callback) => {
+          tabMessages.push({ tabId, message });
+          callback?.();
+        },
       },
     },
     clearTimeout,
@@ -226,11 +240,14 @@ function loadBackgroundScript(configOverrides = {}) {
 
   return {
     canceledDownloads,
+    context,
     downloadItems,
     fetchCalls,
+    notificationCreates,
     onChangedListener,
     onCreatedListener,
     onMessageListener,
+    tabMessages,
   };
 }
 
@@ -275,6 +292,51 @@ test('content script forwards NZB MIME hints for ambiguous download endpoints', 
   assert.equal(sentMessages[1].mime, 'application/x-nzb+xml');
 });
 
+test('background keeps notifications disabled by default', async () => {
+  const { context, notificationCreates } = loadBackgroundScript();
+
+  context.logActivity('Saved to client', 'success');
+
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(notificationCreates, []);
+});
+
+test('background sends notifications only when configured', async () => {
+  const { context, notificationCreates } = loadBackgroundScript({
+    notificationsEnabled: true,
+  });
+
+  context.logActivity('Saved to client', 'success');
+
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(notificationCreates.length, 1);
+  assert.equal(notificationCreates[0][1].title, 'warp: Success');
+});
+
+test('background page toasts are independently toggleable', async () => {
+  const enabled = loadBackgroundScript();
+  enabled.context.showPageToast('Siphoning download...', 7);
+
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(enabled.tabMessages.length, 1);
+  assert.equal(enabled.tabMessages[0].tabId, 7);
+  assert.deepEqual(JSON.parse(JSON.stringify(enabled.tabMessages[0].message)), {
+    action: 'show_toast',
+    text: 'Siphoning download...',
+    tone: 'info',
+  });
+
+  const disabled = loadBackgroundScript({ pageToastsEnabled: false });
+  disabled.context.showPageToast('Siphoning download...', 7);
+
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(disabled.tabMessages, []);
+});
+
 test('background honors an explicit NZB kind when the URL itself is ambiguous', async () => {
   const { fetchCalls, onMessageListener } = loadBackgroundScript();
 
@@ -295,13 +357,12 @@ test('background honors an explicit NZB kind when the URL itself is ambiguous', 
   await new Promise((resolve) => setImmediate(resolve));
 
   assert.equal(response.handled, true);
-  assert.ok(
-    fetchCalls.some((call) => call.resource === 'https://indexer.example/api?t=get&id=42'),
-  );
+  assert.ok(fetchCalls.some((call) => call.resource === 'https://indexer.example/api?t=get&id=42'));
 });
 
 test('downloads fallback siphons a recent native NZB download after a user gesture', async () => {
-  const { canceledDownloads, fetchCalls, onCreatedListener, onMessageListener } = loadBackgroundScript();
+  const { canceledDownloads, fetchCalls, onCreatedListener, onMessageListener } =
+    loadBackgroundScript();
 
   const gestureResponse = await new Promise((resolve) => {
     onMessageListener(
@@ -326,14 +387,18 @@ test('downloads fallback siphons a recent native NZB download after a user gestu
   await new Promise((resolve) => setImmediate(resolve));
 
   assert.deepEqual(canceledDownloads, [99]);
-  assert.ok(
-    fetchCalls.some((call) => call.resource === 'https://indexer.example/api?t=get&id=77'),
-  );
+  assert.ok(fetchCalls.some((call) => call.resource === 'https://indexer.example/api?t=get&id=77'));
 });
 
 test('downloads fallback re-checks pending browser downloads once the NZB filename appears', async () => {
-  const { canceledDownloads, downloadItems, fetchCalls, onChangedListener, onCreatedListener, onMessageListener } =
-    loadBackgroundScript();
+  const {
+    canceledDownloads,
+    downloadItems,
+    fetchCalls,
+    onChangedListener,
+    onCreatedListener,
+    onMessageListener,
+  } = loadBackgroundScript();
 
   const gestureResponse = await new Promise((resolve) => {
     onMessageListener(
@@ -382,7 +447,8 @@ test('downloads fallback re-checks pending browser downloads once the NZB filena
 });
 
 test('downloads fallback matches exact clicked URL when multiple gestures exist', async () => {
-  const { canceledDownloads, fetchCalls, onCreatedListener, onMessageListener } = loadBackgroundScript();
+  const { canceledDownloads, fetchCalls, onCreatedListener, onMessageListener } =
+    loadBackgroundScript();
 
   await new Promise((resolve) => {
     onMessageListener(
@@ -422,7 +488,8 @@ test('downloads fallback matches exact clicked URL when multiple gestures exist'
 });
 
 test('downloads fallback intercepts repeated clicks on same NZB URL every time', async () => {
-  const { canceledDownloads, fetchCalls, onCreatedListener, onMessageListener } = loadBackgroundScript();
+  const { canceledDownloads, fetchCalls, onCreatedListener, onMessageListener } =
+    loadBackgroundScript();
 
   for (let attempt = 0; attempt < 5; attempt += 1) {
     await new Promise((resolve) => {

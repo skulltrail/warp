@@ -19,7 +19,7 @@ const MAX_LOG_ENTRIES = 30;
 const MAX_LOG_MESSAGE_LENGTH = 180;
 const MAX_LOG_DETAILS_LENGTH = 2400;
 const DEFAULT_USER_SETTINGS = {
-  notificationsEnabled: true,
+  notificationsEnabled: false,
   pageToastsEnabled: true,
 };
 
