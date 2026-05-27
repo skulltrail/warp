@@ -98,11 +98,14 @@ function loadBackgroundScript(configOverrides = {}) {
   const fetchCalls = [];
   const canceledDownloads = [];
   const downloadItems = new Map();
+  const dnrSessionRuleUpdates = [];
   const notificationCreates = [];
   const tabMessages = [];
   let onMessageListener = null;
   let onCreatedListener = null;
   let onChangedListener = null;
+  const cookieItems = configOverrides.__cookieItems || [];
+  const fetchImpl = configOverrides.__fetch;
 
   const config = {
     qbitUrl: '',
@@ -134,8 +137,13 @@ function loadBackgroundScript(configOverrides = {}) {
           addListener: () => {},
         },
       },
+      cookies: {
+        getAll: (_details, callback) => callback(cloneDefaults(cookieItems)),
+      },
       declarativeNetRequest: {
-        updateSessionRules: async () => {},
+        updateSessionRules: async (rules) => {
+          dnrSessionRuleUpdates.push(cloneDefaults(rules));
+        },
       },
       downloads: {
         cancel: (downloadId, callback) => {
@@ -217,6 +225,8 @@ function loadBackgroundScript(configOverrides = {}) {
     fetch: async (resource, init = {}) => {
       fetchCalls.push({ resource, init });
 
+      if (fetchImpl) return fetchImpl(resource, init);
+
       if (resource === 'http://sab.local/api') {
         return new Response(JSON.stringify({ status: true }), {
           status: 200,
@@ -241,6 +251,7 @@ function loadBackgroundScript(configOverrides = {}) {
   return {
     canceledDownloads,
     context,
+    dnrSessionRuleUpdates,
     downloadItems,
     fetchCalls,
     notificationCreates,
@@ -300,6 +311,59 @@ test('background keeps notifications disabled by default', async () => {
   await new Promise((resolve) => setImmediate(resolve));
 
   assert.deepEqual(notificationCreates, []);
+});
+
+test('background appends qBittorrent session cookies to scoped API requests', async () => {
+  const qbitTestUrl = 'http://qbittorrent.example.test:18080';
+
+  const { context, dnrSessionRuleUpdates } = loadBackgroundScript({
+    __cookieItems: [
+      { name: 'QBT_SID_8080', value: 'wrong-port-session' },
+      { name: 'SID', value: 'legacy-session' },
+      { name: 'QBT_SID_18080', value: 'session-token' },
+    ],
+  });
+
+  await context.syncQbitHeaderRule(qbitTestUrl, true);
+
+  const latestUpdate = dnrSessionRuleUpdates.at(-1);
+  assert.deepEqual(latestUpdate.removeRuleIds, [1001, 1002]);
+  assert.equal(latestUpdate.addRules.length, 2);
+
+  const cookieRule = latestUpdate.addRules.find((rule) => rule.id === 1002);
+  assert.ok(cookieRule);
+  assert.equal(cookieRule.condition.regexFilter, '^http://qbittorrent\\.example\\.test:18080/api/v2/');
+  assert.deepEqual(cookieRule.condition.resourceTypes, ['xmlhttprequest', 'other']);
+  assert.deepEqual(cookieRule.action.requestHeaders, [
+    {
+      header: 'cookie',
+      operation: 'append',
+      value: 'QBT_SID_18080=session-token',
+    },
+  ]);
+});
+
+test('background supports legacy qBittorrent SID session cookies', async () => {
+  const { context, dnrSessionRuleUpdates } = loadBackgroundScript({
+    __cookieItems: [{ name: 'SID', value: 'legacy-session-token' }],
+  });
+
+  await context.syncQbitHeaderRule('http://qbittorrent.example.test:8080', true);
+
+  const latestUpdate = dnrSessionRuleUpdates.at(-1);
+  const cookieRule = latestUpdate.addRules.find((rule) => rule.id === 1002);
+
+  assert.equal(cookieRule.action.requestHeaders[0].value, 'SID=legacy-session-token');
+});
+
+test('background accepts qBittorrent 204 login responses', async () => {
+  const { context } = loadBackgroundScript({
+    __fetch: async () => new Response(null, { status: 204 }),
+  });
+
+  const result = await context.loginToQbit('http://qbittorrent.example.test:18080', 'admin', 'pass');
+
+  assert.equal(result.success, true);
 });
 
 test('background sends notifications only when configured', async () => {

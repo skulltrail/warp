@@ -172,6 +172,7 @@ const getConfig = () =>
   });
 
 const QBIT_HEADER_RULE_ID = 1001;
+const QBIT_SESSION_COOKIE_RULE_ID = 1002;
 const activeDirectTests = new Map();
 const recentDownloadGestures = [];
 const pendingGestureDownloads = new Map();
@@ -277,8 +278,47 @@ function escapeRegex(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+function getQbitApiRegexFilter(cleanUrl) {
+  return `^${escapeRegex(cleanUrl)}/api/v2/`;
+}
+
+function getQbitApiResourceTypes() {
+  return ['xmlhttprequest', 'other'];
+}
+
+function isQbitSessionCookie(cookie) {
+  return cookie?.name === 'SID' || /^QBT_SID(?:_|$)/.test(cookie?.name || '');
+}
+
+async function getQbitSessionCookie(cleanUrl) {
+  if (!chrome.cookies?.getAll) return null;
+
+  return new Promise((resolve) => {
+    chrome.cookies.getAll({ url: cleanUrl }, (cookies = []) => {
+      if (chrome.runtime.lastError) {
+        console.debug('Failed to read qBittorrent session cookie:', chrome.runtime.lastError.message);
+        resolve(null);
+        return;
+      }
+
+      const endpoint = new URL(cleanUrl);
+      const defaultPort = endpoint.protocol === 'https:' ? '443' : '80';
+      const expectedNames = [
+        `QBT_SID_${endpoint.port || defaultPort}`,
+        'QBT_SID',
+        'SID',
+      ];
+      const sessionCookie =
+        expectedNames.map((name) => cookies.find((cookie) => cookie.name === name)).find(Boolean) ||
+        cookies.find(isQbitSessionCookie);
+
+      resolve(sessionCookie || null);
+    });
+  });
+}
+
 async function syncQbitHeaderRule(url, enabled = true) {
-  const removeRuleIds = [QBIT_HEADER_RULE_ID];
+  const removeRuleIds = [QBIT_HEADER_RULE_ID, QBIT_SESSION_COOKIE_RULE_ID];
 
   if (!enabled || !url) {
     await chrome.declarativeNetRequest.updateSessionRules({ removeRuleIds });
@@ -287,26 +327,49 @@ async function syncQbitHeaderRule(url, enabled = true) {
 
   const cleanUrl = normalizeQbitUrl(url);
   const origin = new URL(cleanUrl).origin;
+  const sessionCookie = await getQbitSessionCookie(cleanUrl);
+  const addRules = [
+    {
+      id: QBIT_HEADER_RULE_ID,
+      priority: 1,
+      action: {
+        type: 'modifyHeaders',
+        requestHeaders: [
+          { header: 'origin', operation: 'set', value: origin },
+          { header: 'referer', operation: 'set', value: cleanUrl },
+        ],
+      },
+      condition: {
+        regexFilter: getQbitApiRegexFilter(cleanUrl),
+        resourceTypes: getQbitApiResourceTypes(),
+      },
+    },
+  ];
+
+  if (sessionCookie?.value) {
+    addRules.push({
+      id: QBIT_SESSION_COOKIE_RULE_ID,
+      priority: 2,
+      action: {
+        type: 'modifyHeaders',
+        requestHeaders: [
+          {
+            header: 'cookie',
+            operation: 'append',
+            value: `${sessionCookie.name}=${sessionCookie.value}`,
+          },
+        ],
+      },
+      condition: {
+        regexFilter: getQbitApiRegexFilter(cleanUrl),
+        resourceTypes: getQbitApiResourceTypes(),
+      },
+    });
+  }
 
   await chrome.declarativeNetRequest.updateSessionRules({
     removeRuleIds,
-    addRules: [
-      {
-        id: QBIT_HEADER_RULE_ID,
-        priority: 1,
-        action: {
-          type: 'modifyHeaders',
-          requestHeaders: [
-            { header: 'origin', operation: 'set', value: origin },
-            { header: 'referer', operation: 'set', value: cleanUrl },
-          ],
-        },
-        condition: {
-          regexFilter: `^${escapeRegex(cleanUrl)}/api/v2/`,
-          resourceTypes: ['xmlhttprequest'],
-        },
-      },
-    ],
+    addRules,
   });
 }
 
@@ -329,6 +392,10 @@ async function loginToQbit(cleanUrl, user, pass, signal) {
 
   if (!loginRes.ok) {
     return { success: false, error: `HTTP ${loginRes.status}: Auth Failed` };
+  }
+
+  if (loginRes.status === 204 && !text.trim()) {
+    return { success: true };
   }
 
   if (text.includes('Fails')) {
@@ -365,6 +432,8 @@ async function ensureQbitSessionForConfig(cleanUrl, credentials, signal) {
 
   const loginResult = await loginToQbit(cleanUrl, credentials.user, credentials.pass, signal);
   if (!loginResult.success) throw new Error(loginResult.error);
+
+  await syncQbitHeaderRule(cleanUrl, true);
 }
 
 async function fetchQbitAuthenticated(
