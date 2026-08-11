@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.2.0](https://github.com/skulltrail/warp/compare/warp-v1.1.0...warp-v1.2.0) (2026-05-27)
+
+
+### Features
+
+* add support for qBittorrent session cookies ([d74c62f](https://github.com/skulltrail/warp/commit/d74c62f2f8901643ad317deeb2ae07fa202bc6fe))
+* disable notifications by default in user settings ([c18806c](https://github.com/skulltrail/warp/commit/c18806c0d52be9067aa8e3f0c636b6d3f7f6f69a))
+* update popup URLs ([0320700](https://github.com/skulltrail/warp/commit/032070008a06f34ad0c194cbee8034c5d8f6b016))
+
 ## [1.1.0](https://github.com/skulltrail/warp/compare/warp-v1.0.0...warp-v1.1.0) (2026-04-23)
 
 
