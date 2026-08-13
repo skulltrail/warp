@@ -29,6 +29,14 @@ test('manifest references files that exist in the extension bundle', () => {
   }
 });
 
+test('extension pages preserve explicitly configured HTTP backend URLs', () => {
+  const extensionPagePolicy = manifest.content_security_policy?.extension_pages || '';
+
+  assert.ok(extensionPagePolicy.includes("script-src 'self'"));
+  assert.ok(extensionPagePolicy.includes("object-src 'self'"));
+  assert.equal(extensionPagePolicy.includes('upgrade-insecure-requests'), false);
+});
+
 test('extension scripts are valid JavaScript', () => {
   for (const relativePath of ['src/background.js', 'src/content.js', 'src/popup/popup.js']) {
     const fileContents = fs.readFileSync(path.join(repoRoot, relativePath), 'utf8');
