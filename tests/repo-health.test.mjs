@@ -311,6 +311,98 @@ test('content script forwards NZB MIME hints for ambiguous download endpoints', 
   assert.equal(sentMessages[1].mime, 'application/x-nzb+xml');
 });
 
+test('content script intercepts extensionless getnzb routes used by NZB indexers', () => {
+  for (const url of [
+    'https://www.nzb.life/getnzb?id=release-id',
+    'https://www.usenet-crawler.com/getnzb/release-id',
+  ]) {
+    const { clickListener, sentMessages } = loadContentScript();
+    let prevented = false;
+
+    const anchor = {
+      href: url,
+      dataset: {},
+      getAttribute: () => '',
+    };
+
+    clickListener({
+      altKey: false,
+      button: 0,
+      ctrlKey: false,
+      isTrusted: true,
+      metaKey: false,
+      preventDefault: () => {
+        prevented = true;
+      },
+      shiftKey: false,
+      stopPropagation: () => {},
+      target: {
+        closest: () => anchor,
+      },
+    });
+
+    assert.equal(prevented, true, url);
+    assert.equal(sentMessages[1].action, 'siphon_download');
+    assert.equal(sentMessages[1].kind, 'nzb');
+  }
+});
+
+test('content script does not treat an NZB hostname as a download', () => {
+  for (const url of [
+    'https://www.nzb.life/details/49e3e5',
+    'https://nzb.example/browse',
+    'https://torrent.example/details/123',
+  ]) {
+    const { clickListener, sentMessages } = loadContentScript();
+    let prevented = false;
+    let stopped = false;
+
+    const anchor = {
+      href: url,
+      dataset: {},
+      getAttribute: () => '',
+    };
+
+    clickListener({
+      altKey: false,
+      button: 0,
+      ctrlKey: false,
+      isTrusted: true,
+      metaKey: false,
+      preventDefault: () => {
+        prevented = true;
+      },
+      shiftKey: false,
+      stopPropagation: () => {
+        stopped = true;
+      },
+      target: {
+        closest: () => anchor,
+      },
+    });
+
+    assert.equal(prevented, false, url);
+    assert.equal(stopped, false, url);
+    assert.deepEqual(
+      sentMessages.map((message) => message.action),
+      ['register_download_gesture'],
+      url,
+    );
+  }
+});
+
+test('download detection still recognizes extensions outside the hostname', () => {
+  const { context } = loadBackgroundScript();
+
+  assert.equal(context.inferSiphonKind('https://nzb.example/files/release.nzb'), 'nzb');
+  assert.equal(
+    context.inferSiphonKind('https://indexer.example/get?filename=release%2Enzb'),
+    'nzb',
+  );
+  assert.equal(context.inferSiphonKind('release.torrent'), 'torrent');
+  assert.equal(context.inferSiphonKind('https://www.nzb.life/details/49e3e5'), null);
+});
+
 test('background keeps notifications disabled by default', async () => {
   const { context, notificationCreates } = loadBackgroundScript();
 

@@ -215,6 +215,7 @@ function inferSiphonKind(targetUrl, hintedFilename = '', hintedMime = '') {
 
   if (
     candidates.some((value) => matchesDownloadExtension(value, 'nzb')) ||
+    candidates.some(matchesNzbRoute) ||
     matchesNzbMime(normalizedMime)
   ) {
     return 'nzb';
@@ -227,22 +228,38 @@ function matchesNzbMime(mime) {
   return mime.includes('x-nzb') || mime.includes('nzb+xml') || mime.endsWith('/nzb');
 }
 
+function matchesNzbRoute(value) {
+  try {
+    const parsed = new URL(value, window.location.href);
+    return parsed.pathname
+      .split('/')
+      .filter(Boolean)
+      .some((segment) => /^(?:get|download)[_-]?nzbs?$/i.test(decodeURIComponent(segment)));
+  } catch {
+    return false;
+  }
+}
+
 function matchesDownloadExtension(value, extension) {
-  const needle = `.${extension}`.toLowerCase();
-  const normalized = (value || '').toString().toLowerCase();
+  const extensionPattern = new RegExp(`\\.${extension}(?:$|[/?#&])`, 'i');
+  const normalized = (value || '').toString();
 
   if (!normalized) return false;
-  if (normalized.includes(needle)) return true;
 
   try {
     const parsed = new URL(value, window.location.href);
-    if (parsed.pathname.toLowerCase().includes(needle)) return true;
-    if (decodeURIComponent(parsed.pathname).toLowerCase().includes(needle)) return true;
-    return [...parsed.searchParams.values()].some((paramValue) =>
-      decodeURIComponent(paramValue).toLowerCase().includes(needle),
-    );
+    if (extensionPattern.test(parsed.pathname)) return true;
+    if (extensionPattern.test(decodeURIComponent(parsed.pathname))) return true;
+    return [...parsed.searchParams.values()].some((paramValue) => {
+      const decodedValue = decodeURIComponent(paramValue);
+      return extensionPattern.test(paramValue) || extensionPattern.test(decodedValue);
+    });
   } catch {
-    return false;
+    try {
+      return extensionPattern.test(decodeURIComponent(normalized));
+    } catch {
+      return extensionPattern.test(normalized);
+    }
   }
 }
 
