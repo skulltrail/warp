@@ -3,6 +3,8 @@
 # Quick start:
 #   make setup     # install deps + git hooks
 #   make build     # produce the release zip + unpacked bundle in dist/
+#   make dev-chromium  # launch a disposable Chromium profile
+#   make dev-firefox   # launch a disposable Firefox profile
 #   make ci        # lint + test + build
 
 # --- Config ----------------------------------------------------------------
@@ -25,7 +27,7 @@ help: ## Show this help
 
 .PHONY: setup
 setup: ## Install dependencies and configure git hooks
-	npm install
+	npm ci
 
 .PHONY: lint
 lint: ## Run ESLint
@@ -42,20 +44,29 @@ ci: ## Run lint + test + build (same as CI)
 # --- Build -----------------------------------------------------------------
 
 .PHONY: build
-build: ## Build the release zip + unpacked bundle into dist/
+build: ## Build clean archives + locally configured unpacked bundles
 	npm run build
 	@echo ""
-	@echo "Load in Firefox: about:debugging#/runtime/this-firefox ->"
-	@echo "  Load Temporary Add-on -> select dist/unpacked/manifest.json"
+	@echo "Chromium: dist/chromium/"
+	@echo "Firefox:  dist/firefox/"
+
+.PHONY: dev-chromium
+dev-chromium: ## Build and launch Chromium with local config
+	npm run dev:chromium
+
+.PHONY: dev-firefox
+dev-firefox: ## Build and launch Firefox with local config
+	npm run dev:firefox
 
 .PHONY: sign
-sign: build ## Sign a permanent Firefox .xpi via AMO (needs AMO_JWT_ISSUER/SECRET)
+sign: ## Sign a permanent Firefox .xpi via AMO (needs AMO_JWT_ISSUER/SECRET)
 	@if [ -z "$$AMO_JWT_ISSUER" ] || [ -z "$$AMO_JWT_SECRET" ]; then \
 		echo "Set AMO_JWT_ISSUER and AMO_JWT_SECRET (addons.mozilla.org -> Manage API Keys)."; \
 		exit 1; \
 	fi
-	npx --yes web-ext sign \
-		--source-dir dist/unpacked \
+	npm run build:release
+	npx --yes web-ext@10.6.0 sign \
+		--source-dir dist/firefox \
 		--artifacts-dir dist \
 		--channel unlisted \
 		--api-key "$$AMO_JWT_ISSUER" \

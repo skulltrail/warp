@@ -1,0 +1,9 @@
+{
+  "qbitUrl": "http://localhost:8080",
+  "qbitUser": "admin",
+  "qbitPass": "",
+  "qbitEnabled": true,
+  "sabUrl": "http://localhost:8081",
+  "sabKey": "",
+  "sabEnabled": true
+}

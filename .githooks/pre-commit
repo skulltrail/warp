@@ -4,6 +4,9 @@ set -eu
 repo_root="$(git rev-parse --show-toplevel)"
 cd "$repo_root"
 
+printf '%s\n' 'Checking staged files for local credentials'
+npm run check:secrets -- --staged
+
 printf '%s\n' 'Running npm run lint'
 npm run lint
 

@@ -1,0 +1,23 @@
+#!/usr/bin/env sh
+set -eu
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+
+zero_sha=0000000000000000000000000000000000000000
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+  if [ "$local_sha" = "$zero_sha" ]; then
+    continue
+  fi
+
+  if [ "$remote_sha" = "$zero_sha" ]; then
+    revisions="$(git rev-list "$local_sha" --not --remotes)"
+  else
+    revisions="$(git rev-list "$remote_sha..$local_sha")"
+  fi
+
+  for revision in $revisions; do
+    node scripts/check-secrets.mjs --commit "$revision"
+  done
+done
