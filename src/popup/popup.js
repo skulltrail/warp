@@ -395,7 +395,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function persistBackendEnabledStates() {
-    chrome.storage.sync.set(
+    chrome.storage.local.set(
       {
         qbitEnabled: qbitEnabled.checked,
         sabEnabled: sabEnabled.checked,
@@ -494,7 +494,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
     if (!confirmed) return;
 
-    const resetState = {
+    const resetBackendState = {
       qbitUrl: '',
       qbitUser: '',
       qbitPass: '',
@@ -502,26 +502,21 @@ document.addEventListener('DOMContentLoaded', () => {
       sabUrl: '',
       sabKey: '',
       sabEnabled: true,
+    };
+    const resetUserSettings = {
       themeMode: 'system',
       notificationsEnabled: false,
       pageToastsEnabled: true,
       confirmDangerActions: true,
     };
 
-    chrome.storage.sync.set(resetState, () => {
+    chrome.storage.sync.set(resetUserSettings, () => {
       chrome.storage.local.set(
         {
+          ...resetBackendState,
           activeView: 'main',
           logs: [],
-          draft: {
-            qbitUrl: '',
-            qbitUser: '',
-            qbitPass: '',
-            qbitEnabled: true,
-            sabUrl: '',
-            sabKey: '',
-            sabEnabled: true,
-          },
+          draft: resetBackendState,
         },
         () => {
           qbitUrl.value = '';
@@ -588,98 +583,115 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   chrome.storage.local.get(
-    ['draft', 'activeView', 'logs', 'themePreference', 'backendBadgeState'],
+    {
+      draft: null,
+      activeView: 'main',
+      logs: [],
+      themePreference: null,
+      backendBadgeState: null,
+      qbitUrl: '',
+      qbitUser: '',
+      qbitPass: '',
+      qbitEnabled: true,
+      sabUrl: '',
+      sabKey: '',
+      sabEnabled: true,
+    },
     (localObj) => {
-      chrome.storage.sync.get(
-        {
-          qbitUrl: '',
-          qbitUser: '',
-          qbitPass: '',
-          qbitEnabled: true,
-          sabUrl: '',
-          sabKey: '',
-          sabEnabled: true,
-          themeMode: 'system',
-          notificationsEnabled: false,
-          pageToastsEnabled: true,
-          confirmDangerActions: true,
-        },
-        (syncObj) => {
-          syncPersistedBackendConfig(syncObj);
-          const data = localObj.draft ? { ...syncObj, ...localObj.draft } : syncObj;
-          const legacyThemePreference = localObj.themePreference;
-          themeMode = normalizeThemeMode(syncObj.themeMode);
-          if (
-            themeMode === 'system' &&
-            (legacyThemePreference === 'light' || legacyThemePreference === 'dark')
-          ) {
-            themeMode = legacyThemePreference;
-          }
-          notificationsEnabled = Boolean(syncObj.notificationsEnabled);
-          pageToastsEnabled = Boolean(syncObj.pageToastsEnabled);
-          confirmDangerActions = syncObj.confirmDangerActions !== false;
-          applyUserSettingsControls();
-          applyResolvedTheme();
-          applyNavBadgeState(localObj.backendBadgeState);
+      chrome.runtime.sendMessage({ action: 'get_backend_config' }, (configResponse) => {
+        const resolvedBackendConfig =
+          !chrome.runtime.lastError && configResponse?.success ? configResponse.config : {};
+        const hydratedLocalObj = { ...localObj, ...resolvedBackendConfig };
 
-          qbitUrl.value = data.qbitUrl;
-          qbitUser.value = data.qbitUser;
-          qbitPass.value = data.qbitPass;
-          qbitEnabled.checked = data.qbitEnabled;
-          sabUrl.value = data.sabUrl;
-          sabKey.value = data.sabKey;
-          sabEnabled.checked = data.sabEnabled;
-
-          if (hasUnsavedBackendChanges('qbit')) {
-            if (qbitEnabled.checked) {
-              sendRuntimeBackendHealth('qbit', {
-                successful: false,
-                errorText: 'UNSAVED CHANGES',
-                sticky: true,
-              });
-            } else {
-              sendRuntimeBackendHealth('qbit', { clear: true });
+        chrome.storage.sync.get(
+          {
+            themeMode: 'system',
+            notificationsEnabled: false,
+            pageToastsEnabled: true,
+            confirmDangerActions: true,
+          },
+          (syncObj) => {
+            syncPersistedBackendConfig(hydratedLocalObj);
+            const draftData = hydratedLocalObj.draft
+              ? { ...hydratedLocalObj, ...hydratedLocalObj.draft }
+              : hydratedLocalObj;
+            const data = configResponse?.bundled
+              ? { ...draftData, ...resolvedBackendConfig }
+              : draftData;
+            const legacyThemePreference = localObj.themePreference;
+            themeMode = normalizeThemeMode(syncObj.themeMode);
+            if (
+              themeMode === 'system' &&
+              (legacyThemePreference === 'light' || legacyThemePreference === 'dark')
+            ) {
+              themeMode = legacyThemePreference;
             }
-          }
+            notificationsEnabled = Boolean(syncObj.notificationsEnabled);
+            pageToastsEnabled = Boolean(syncObj.pageToastsEnabled);
+            confirmDangerActions = syncObj.confirmDangerActions !== false;
+            applyUserSettingsControls();
+            applyResolvedTheme();
+            applyNavBadgeState(localObj.backendBadgeState);
 
-          if (hasUnsavedBackendChanges('sab')) {
-            if (sabEnabled.checked) {
-              sendRuntimeBackendHealth('sab', {
-                successful: false,
-                errorText: 'UNSAVED CHANGES',
-                sticky: true,
-              });
-            } else {
-              sendRuntimeBackendHealth('sab', { clear: true });
+            qbitUrl.value = data.qbitUrl;
+            qbitUser.value = data.qbitUser;
+            qbitPass.value = data.qbitPass;
+            qbitEnabled.checked = data.qbitEnabled;
+            sabUrl.value = data.sabUrl;
+            sabKey.value = data.sabKey;
+            sabEnabled.checked = data.sabEnabled;
+
+            if (hasUnsavedBackendChanges('qbit')) {
+              if (qbitEnabled.checked) {
+                sendRuntimeBackendHealth('qbit', {
+                  successful: false,
+                  errorText: 'UNSAVED CHANGES',
+                  sticky: true,
+                });
+              } else {
+                sendRuntimeBackendHealth('qbit', { clear: true });
+              }
             }
-          }
 
-          syncCardPresentation();
-          hydrateAboutView();
-          renderLogs(localObj.logs || []);
-          initializeDashboardPanels();
-          refreshMainView();
+            if (hasUnsavedBackendChanges('sab')) {
+              if (sabEnabled.checked) {
+                sendRuntimeBackendHealth('sab', {
+                  successful: false,
+                  errorText: 'UNSAVED CHANGES',
+                  sticky: true,
+                });
+              } else {
+                sendRuntimeBackendHealth('sab', { clear: true });
+              }
+            }
 
-          const startView = views[localObj.activeView] ? localObj.activeView : 'main';
-          switchView(startView, { persist: false });
-          requestBackendBadgeRefresh();
-          appContainer.classList.add('ready');
-        },
-      );
+            syncCardPresentation();
+            hydrateAboutView();
+            renderLogs(localObj.logs || []);
+            initializeDashboardPanels();
+            refreshMainView();
+
+            const startView = views[localObj.activeView] ? localObj.activeView : 'main';
+            switchView(startView, { persist: false });
+            requestBackendBadgeRefresh();
+            appContainer.classList.add('ready');
+          },
+        );
+      });
     },
   );
 
   chrome.storage.onChanged.addListener((changes, namespace) => {
-    if (namespace === 'sync') {
-      const nextBackendSyncState = {};
+    if (namespace === 'local') {
+      const nextBackendLocalState = {};
       ['qbitUrl', 'qbitUser', 'qbitPass', 'qbitEnabled', 'sabUrl', 'sabKey', 'sabEnabled'].forEach(
         (key) => {
           if (!changes[key]) return;
-          nextBackendSyncState[key] = changes[key].newValue;
+          nextBackendLocalState[key] = changes[key].newValue;
         },
       );
-      if (Object.keys(nextBackendSyncState).length) {
-        syncPersistedBackendConfig(nextBackendSyncState);
+      if (Object.keys(nextBackendLocalState).length) {
+        syncPersistedBackendConfig(nextBackendLocalState);
       }
     }
 
@@ -1176,7 +1188,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (pollInFlight) return;
     pollInFlight = true;
 
-    chrome.storage.sync.get(['qbitEnabled', 'sabEnabled'], (syncObj) => {
+    chrome.storage.local.get(['qbitEnabled', 'sabEnabled'], (syncObj) => {
       let pending = 0;
       const completePoll = () => {
         pending -= 1;
@@ -1266,7 +1278,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function refreshMainView() {
-    chrome.storage.sync.get(['qbitEnabled', 'sabEnabled'], (syncObj) => {
+    chrome.storage.local.get(['qbitEnabled', 'sabEnabled'], (syncObj) => {
       if (syncObj.qbitEnabled) {
         if (!isManualTestActive('qbit')) {
           renderBackendStatus('qbit');
@@ -1324,7 +1336,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function persistBackendConfig(client, callback = () => {}) {
-    const syncPayload =
+    const localPayload =
       client === 'qbit'
         ? {
             qbitUrl: qbitUrl.value.trim(),
@@ -1338,11 +1350,11 @@ document.addEventListener('DOMContentLoaded', () => {
             sabEnabled: sabEnabled.checked,
           };
 
-    chrome.storage.sync.set(syncPayload, () => {
-      syncPersistedBackendConfig(syncPayload);
+    chrome.storage.local.set(localPayload, () => {
+      syncPersistedBackendConfig(localPayload);
       chrome.storage.local.get('draft', (draftObj) => {
         const currentDraft = draftObj.draft || {};
-        chrome.storage.local.set({ draft: { ...currentDraft, ...syncPayload } }, callback);
+        chrome.storage.local.set({ draft: { ...currentDraft, ...localPayload } }, callback);
       });
     });
   }

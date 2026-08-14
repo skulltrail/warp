@@ -22,6 +22,16 @@ const DEFAULT_USER_SETTINGS = {
   notificationsEnabled: false,
   pageToastsEnabled: true,
 };
+const BACKEND_CONFIG_DEFAULTS = {
+  qbitUrl: '',
+  qbitUser: '',
+  qbitPass: '',
+  qbitEnabled: true,
+  sabUrl: '',
+  sabKey: '',
+  sabEnabled: true,
+};
+const BACKEND_CONFIG_KEYS = Object.keys(BACKEND_CONFIG_DEFAULTS);
 
 const getUserSettings = () =>
   new Promise((resolve) => {
@@ -163,13 +173,38 @@ async function fetchWithTimeout(
 }
 
 // Get Config helper
-const getConfig = () =>
-  new Promise((resolve) => {
-    chrome.storage.sync.get(
-      ['qbitUrl', 'qbitUser', 'qbitPass', 'qbitEnabled', 'sabUrl', 'sabKey', 'sabEnabled'],
-      resolve,
-    );
+const backendConfigReady = new Promise((resolve) => {
+  chrome.storage.local.get(BACKEND_CONFIG_KEYS, (localConfig) => {
+    chrome.storage.sync.get(BACKEND_CONFIG_KEYS, (legacyConfig) => {
+      const migratedConfig = { ...BACKEND_CONFIG_DEFAULTS, ...legacyConfig, ...localConfig };
+      const bundledConfig = globalThis.WARP_LOCAL_CONFIG;
+      const nextConfig =
+        bundledConfig && typeof bundledConfig === 'object'
+          ? { ...migratedConfig, ...bundledConfig }
+          : migratedConfig;
+
+      chrome.storage.local.set(nextConfig, () => {
+        if (chrome.runtime.lastError) {
+          console.warn(
+            'Failed to migrate backend configuration locally:',
+            chrome.runtime.lastError.message,
+          );
+          resolve();
+          return;
+        }
+        chrome.storage.sync.remove(BACKEND_CONFIG_KEYS, resolve);
+      });
+    });
   });
+});
+
+const getConfig = () =>
+  backendConfigReady.then(
+    () =>
+      new Promise((resolve) => {
+        chrome.storage.local.get(BACKEND_CONFIG_DEFAULTS, resolve);
+      }),
+  );
 
 const QBIT_HEADER_RULE_ID = 1001;
 const QBIT_SESSION_COOKIE_RULE_ID = 1002;
@@ -278,6 +313,40 @@ function escapeRegex(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+function redactSensitiveUrl(value, depth = 0) {
+  if (depth > 2) return '[redacted-url]';
+
+  try {
+    const parsed = new URL(value);
+    if (parsed.username) parsed.username = 'redacted';
+    if (parsed.password) parsed.password = 'redacted';
+    const pathSegments = parsed.pathname.split('/');
+    parsed.pathname = pathSegments
+      .map((segment, index) => {
+        const previousSegment = pathSegments[index - 1] || '';
+        if (/^(auth|api.?key|key|pass.?key|password|secret|token)$/i.test(previousSegment)) {
+          return '[redacted]';
+        }
+        if (segment.length >= 24 && /^[a-z0-9_-]+$/i.test(segment)) return '[redacted]';
+        return segment;
+      })
+      .join('/');
+
+    for (const [key, parameterValue] of parsed.searchParams.entries()) {
+      if (/(api.?key|auth.?key|pass.?key|password|rss.?key|secret|token)$/i.test(key)) {
+        parsed.searchParams.set(key, '[redacted]');
+      } else if (/^(as|tr|ws|xs)$/i.test(key)) {
+        parsed.searchParams.set(key, '[redacted-url]');
+      } else if (/^https?:\/\//i.test(parameterValue)) {
+        parsed.searchParams.set(key, redactSensitiveUrl(parameterValue, depth + 1));
+      }
+    }
+    return parsed.toString();
+  } catch {
+    return value;
+  }
+}
+
 function getQbitApiRegexFilter(cleanUrl) {
   return `^${escapeRegex(cleanUrl)}/api/v2/`;
 }
@@ -296,18 +365,17 @@ async function getQbitSessionCookie(cleanUrl) {
   return new Promise((resolve) => {
     chrome.cookies.getAll({ url: cleanUrl }, (cookies = []) => {
       if (chrome.runtime.lastError) {
-        console.debug('Failed to read qBittorrent session cookie:', chrome.runtime.lastError.message);
+        console.debug(
+          'Failed to read qBittorrent session cookie:',
+          chrome.runtime.lastError.message,
+        );
         resolve(null);
         return;
       }
 
       const endpoint = new URL(cleanUrl);
       const defaultPort = endpoint.protocol === 'https:' ? '443' : '80';
-      const expectedNames = [
-        `QBT_SID_${endpoint.port || defaultPort}`,
-        'QBT_SID',
-        'SID',
-      ];
+      const expectedNames = [`QBT_SID_${endpoint.port || defaultPort}`, 'QBT_SID', 'SID'];
       const sessionCookie =
         expectedNames.map((name) => cookies.find((cookie) => cookie.name === name)).find(Boolean) ||
         cookies.find(isQbitSessionCookie);
@@ -1022,7 +1090,7 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 });
 
 chrome.storage.onChanged.addListener((changes, areaName) => {
-  if (areaName !== 'sync') return;
+  if (areaName !== 'local') return;
 
   const qbitRuleChanged = Boolean(changes.qbitUrl || changes.qbitEnabled);
   const badgeRelevantChange = Boolean(
@@ -1253,6 +1321,21 @@ async function sendToSab(targetUrl) {
 
 // Listen for messages from popup and content scripts
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  if (request.action === 'get_backend_config') {
+    getConfig()
+      .then((config) =>
+        sendResponse({
+          success: true,
+          config,
+          bundled: Boolean(globalThis.WARP_LOCAL_CONFIG),
+        }),
+      )
+      .catch((err) =>
+        sendResponse({ success: false, error: err?.message || 'CONFIG_UNAVAILABLE' }),
+      );
+    return true;
+  }
+
   if (request.action === 'register_download_gesture') {
     markRecentDownloadGesture(request.url, sender.tab?.id, request.filename, request.mime);
     sendResponse({ received: true });
@@ -1464,11 +1547,12 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
   if (request.action === 'siphon_magnet') {
     const magnetMeta = parseMagnetMetadata(request.url);
+    const safeUrl = redactSensitiveUrl(request.url);
     showPageToast('Siphoning magnet link...', sender.tab?.id);
     logActivity(
       'Intercepting magnet link...',
       'info',
-      `[Route] qBittorrent\n[Name] ${magnetMeta.name}\n[Hash] ${magnetMeta.hash || 'Unknown'}\n[URL] ${request.url}`,
+      `[Route] qBittorrent\n[Name] ${magnetMeta.name}\n[Hash] ${magnetMeta.hash || 'Unknown'}\n[URL] ${safeUrl}`,
       true,
       'warp: Siphoning',
     );
@@ -1482,7 +1566,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             logActivity(
               'Successfully sent magnet to qBittorrent',
               'success',
-              `[Route] qBittorrent\n[Name] ${magnetMeta.name}\n[Hash] ${magnetMeta.hash || 'Unknown'}\n[URL] ${request.url}`,
+              `[Route] qBittorrent\n[Name] ${magnetMeta.name}\n[Hash] ${magnetMeta.hash || 'Unknown'}\n[URL] ${safeUrl}`,
               true,
               'warp: Siphoned',
             );
@@ -1492,7 +1576,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             logActivity(
               'Failed to send magnet to qBittorrent',
               'error',
-              `[Route] qBittorrent\n[Name] ${magnetMeta.name}\n[Hash] ${magnetMeta.hash || 'Unknown'}\n[Error] ${err.message}\n[URL] ${request.url}`,
+              `[Route] qBittorrent\n[Name] ${magnetMeta.name}\n[Hash] ${magnetMeta.hash || 'Unknown'}\n[Error] ${err.message}\n[URL] ${safeUrl}`,
               true,
               'warp: Siphon Failed',
             );
@@ -1503,7 +1587,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         logActivity(
           'qBittorrent is disabled. Magnet dropped.',
           'error',
-          `[Name] ${magnetMeta.name}\n[Hash] ${magnetMeta.hash || 'Unknown'}\n[URL] ${request.url}\n[Result] Enable qBittorrent to catch magnet intents.`,
+          `[Name] ${magnetMeta.name}\n[Hash] ${magnetMeta.hash || 'Unknown'}\n[URL] ${safeUrl}\n[Result] Enable qBittorrent to catch magnet intents.`,
           true,
           'warp: Siphon Failed',
         );
@@ -1697,12 +1781,13 @@ function beginDownloadSiphon(kind, url, tabId, filename) {
   const inferredName =
     filename || inferFilenameFromUrl(url, kind === 'torrent' ? 'download.torrent' : 'download.nzb');
   const route = kind === 'torrent' ? 'qBittorrent' : 'SABnzbd';
+  const safeUrl = redactSensitiveUrl(url);
 
   showPageToast(`Siphoning ${kind === 'torrent' ? '.torrent' : '.nzb'} download...`, tabId, 'info');
   logActivity(
     `Intercepted explicit ${kind === 'torrent' ? '.torrent' : '.nzb'} download...`,
     'info',
-    `[Route] ${route}\n[File] ${inferredName}\n[URL] ${url}`,
+    `[Route] ${route}\n[File] ${inferredName}\n[URL] ${safeUrl}`,
     true,
     'warp: Siphoning',
   );
@@ -1718,7 +1803,7 @@ function beginDownloadSiphon(kind, url, tabId, filename) {
       logActivity(
         `Successfully siphoned ${kind === 'torrent' ? '.torrent' : '.nzb'} to ${route}`,
         'success',
-        `[Route] ${route}\n[File] ${result?.filename || inferredName}\n[URL] ${url}`,
+        `[Route] ${route}\n[File] ${result?.filename || inferredName}\n[URL] ${safeUrl}`,
         true,
         'warp: Siphoned',
       );
@@ -1728,7 +1813,7 @@ function beginDownloadSiphon(kind, url, tabId, filename) {
       logActivity(
         `Failed to siphon ${kind === 'torrent' ? '.torrent' : '.nzb'}: ${err.message}`,
         'error',
-        `[Route] ${route}\n[File] ${inferredName}\n[Error] ${err.message}\n[URL] ${url}`,
+        `[Route] ${route}\n[File] ${inferredName}\n[Error] ${err.message}\n[URL] ${safeUrl}`,
         true,
         'warp: Siphon Failed',
       );

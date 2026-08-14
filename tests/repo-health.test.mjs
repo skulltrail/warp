@@ -109,6 +109,8 @@ function loadBackgroundScript(configOverrides = {}) {
   const dnrSessionRuleUpdates = [];
   const notificationCreates = [];
   const tabMessages = [];
+  const localStorage = {};
+  const removedSyncKeys = [];
   let onMessageListener = null;
   let onCreatedListener = null;
   let onChangedListener = null;
@@ -195,8 +197,24 @@ function loadBackgroundScript(configOverrides = {}) {
       },
       storage: {
         local: {
-          get: (defaults, callback) => callback(cloneDefaults(defaults)),
-          set: (_items, callback) => callback?.(),
+          get: (keys, callback) => {
+            if (Array.isArray(keys)) {
+              callback(
+                Object.fromEntries(
+                  keys
+                    .filter((key) => Object.prototype.hasOwnProperty.call(localStorage, key))
+                    .map((key) => [key, cloneDefaults(localStorage[key])]),
+                ),
+              );
+              return;
+            }
+
+            callback({ ...cloneDefaults(keys), ...cloneDefaults(localStorage) });
+          },
+          set: (items, callback) => {
+            Object.assign(localStorage, cloneDefaults(items));
+            callback?.();
+          },
         },
         onChanged: {
           addListener: () => {},
@@ -217,7 +235,10 @@ function loadBackgroundScript(configOverrides = {}) {
             });
             callback(merged);
           },
-          remove: () => {},
+          remove: (keys, callback) => {
+            removedSyncKeys.push(...(Array.isArray(keys) ? keys : [keys]));
+            callback?.();
+          },
         },
       },
       tabs: {
@@ -251,6 +272,7 @@ function loadBackgroundScript(configOverrides = {}) {
       });
     },
     setTimeout: () => 0,
+    WARP_LOCAL_CONFIG: configOverrides.__bundledConfig,
   });
 
   const source = fs.readFileSync(path.join(repoRoot, 'src/background.js'), 'utf8');
@@ -262,13 +284,83 @@ function loadBackgroundScript(configOverrides = {}) {
     dnrSessionRuleUpdates,
     downloadItems,
     fetchCalls,
+    localStorage,
     notificationCreates,
     onChangedListener,
     onCreatedListener,
     onMessageListener,
+    removedSyncKeys,
     tabMessages,
   };
 }
+
+test('background migrates backend credentials from sync to local storage', async () => {
+  const { localStorage, removedSyncKeys } = loadBackgroundScript({
+    qbitPass: 'qbit-secret',
+    sabKey: 'sab-secret',
+  });
+
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(localStorage.qbitPass, 'qbit-secret');
+  assert.equal(localStorage.sabKey, 'sab-secret');
+  assert.ok(removedSyncKeys.includes('qbitPass'));
+  assert.ok(removedSyncKeys.includes('sabKey'));
+});
+
+test('background exposes bundled config only after local persistence', async () => {
+  const bundledConfig = {
+    qbitUrl: 'http://qbit.configured.test',
+    qbitUser: 'configured-user',
+    qbitPass: 'configured-pass',
+    qbitEnabled: true,
+    sabUrl: 'http://sab.configured.test',
+    sabKey: 'configured-key',
+    sabEnabled: true,
+  };
+  const { localStorage, onMessageListener } = loadBackgroundScript({
+    __bundledConfig: bundledConfig,
+  });
+
+  const response = await new Promise((resolve) => {
+    onMessageListener({ action: 'get_backend_config' }, {}, resolve);
+  });
+
+  assert.equal(response.success, true);
+  assert.equal(response.bundled, true);
+  assert.deepEqual(JSON.parse(JSON.stringify(response.config)), bundledConfig);
+  assert.equal(localStorage.qbitUrl, bundledConfig.qbitUrl);
+  assert.equal(localStorage.sabUrl, bundledConfig.sabUrl);
+});
+
+test('background redacts credentials from logged URLs', () => {
+  const { context } = loadBackgroundScript();
+  const redacted = new URL(
+    context.redactSensitiveUrl(
+      'https://user:pass@indexer.example/get?nzb=42&apikey=abc&authkey=def&token=ghi',
+    ),
+  );
+
+  assert.equal(redacted.username, 'redacted');
+  assert.equal(redacted.password, 'redacted');
+  assert.equal(redacted.searchParams.get('apikey'), '[redacted]');
+  assert.equal(redacted.searchParams.get('authkey'), '[redacted]');
+  assert.equal(redacted.searchParams.get('token'), '[redacted]');
+  assert.equal(redacted.searchParams.get('nzb'), '42');
+
+  const magnet = new URL(
+    context.redactSensitiveUrl(
+      'magnet:?xt=urn:btih:abc&tr=https%3A%2F%2Ftracker.example%2Fpasskey%2Fsecret-value',
+    ),
+  );
+  assert.equal(magnet.searchParams.get('xt'), 'urn:btih:abc');
+  assert.equal(magnet.searchParams.get('tr'), '[redacted-url]');
+
+  const pathCredential = new URL(
+    context.redactSensitiveUrl('https://indexer.example/passkey/secret-value/file.nzb'),
+  );
+  assert.equal(pathCredential.pathname, '/passkey/[redacted]/file.nzb');
+});
 
 test('content script forwards NZB MIME hints for ambiguous download endpoints', () => {
   const { clickListener, sentMessages } = loadContentScript();
@@ -424,6 +516,7 @@ test('background appends qBittorrent session cookies to scoped API requests', as
     ],
   });
 
+  await new Promise((resolve) => setImmediate(resolve));
   await context.syncQbitHeaderRule(qbitTestUrl, true);
 
   const latestUpdate = dnrSessionRuleUpdates.at(-1);
@@ -432,7 +525,10 @@ test('background appends qBittorrent session cookies to scoped API requests', as
 
   const cookieRule = latestUpdate.addRules.find((rule) => rule.id === 1002);
   assert.ok(cookieRule);
-  assert.equal(cookieRule.condition.regexFilter, '^http://qbittorrent\\.example\\.test:18080/api/v2/');
+  assert.equal(
+    cookieRule.condition.regexFilter,
+    '^http://qbittorrent\\.example\\.test:18080/api/v2/',
+  );
   assert.deepEqual(cookieRule.condition.resourceTypes, ['xmlhttprequest', 'other']);
   assert.deepEqual(cookieRule.action.requestHeaders, [
     {
@@ -448,6 +544,7 @@ test('background supports legacy qBittorrent SID session cookies', async () => {
     __cookieItems: [{ name: 'SID', value: 'legacy-session-token' }],
   });
 
+  await new Promise((resolve) => setImmediate(resolve));
   await context.syncQbitHeaderRule('http://qbittorrent.example.test:8080', true);
 
   const latestUpdate = dnrSessionRuleUpdates.at(-1);
@@ -461,7 +558,11 @@ test('background accepts qBittorrent 204 login responses', async () => {
     __fetch: async () => new Response(null, { status: 204 }),
   });
 
-  const result = await context.loginToQbit('http://qbittorrent.example.test:18080', 'admin', 'pass');
+  const result = await context.loginToQbit(
+    'http://qbittorrent.example.test:18080',
+    'admin',
+    'pass',
+  );
 
   assert.equal(result.success, true);
 });
