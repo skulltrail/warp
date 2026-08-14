@@ -992,11 +992,13 @@ document.addEventListener('DOMContentLoaded', () => {
     }, STATUS_SETTLE_DELAY_MS);
   }
 
-  function getEditButtonIcon(state) {
-    if (state === 'close') {
-      return '<svg viewBox="0 0 24 24"><path d="m6 14 6-6 6 6"></path></svg>';
-    }
-    return '<svg viewBox="0 0 24 24"><path d="m6 10 6 6 6-6"></path></svg>';
+  function createChevronIcon(state) {
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('d', state === 'close' ? 'm6 14 6-6 6 6' : 'm6 10 6 6 6-6');
+    svg.appendChild(path);
+    return svg;
   }
 
   function renderEditButtons() {
@@ -1012,7 +1014,7 @@ document.addEventListener('DOMContentLoaded', () => {
       button.dataset.variant = variant;
       button.setAttribute('aria-label', label);
       button.setAttribute('title', label);
-      icon.innerHTML = getEditButtonIcon(variant);
+      icon.replaceChildren(createChevronIcon(variant));
     });
   }
 
@@ -1674,10 +1676,12 @@ document.addEventListener('DOMContentLoaded', () => {
         ...log,
         logKey: `${log.timestamp}-${index}`,
       }));
-    activityLogInteractive.innerHTML = '';
+    activityLogInteractive.replaceChildren();
     if (!renderedLogs.length) {
-      activityLogInteractive.innerHTML =
-        '<li class="log-placeholder">NO ACTIVITY RECORDED YET.</li>';
+      const placeholder = document.createElement('li');
+      placeholder.className = 'log-placeholder';
+      placeholder.textContent = 'NO ACTIVITY RECORDED YET.';
+      activityLogInteractive.appendChild(placeholder);
       selectedLogKey = null;
       return;
     }
@@ -1701,28 +1705,44 @@ document.addEventListener('DOMContentLoaded', () => {
       });
       const statusLabel = getStatusLabel(log.status);
       const detailText = log.details || 'No detailed trace generated.';
+      const messageText = String(log.message || '');
       const expanded = selectedLogKey === log.logKey;
 
-      li.innerHTML = `
-        <span class="log-time">${timeStr}</span>
-        <span class="log-status-text">${statusLabel}</span>
-        <div class="log-entry-body">
-          <p class="log-entry-message" title="${escapeHtml(log.message)}">${escapeHtml(log.message)}</p>
-        </div>
-        <button class="log-open-btn" type="button" aria-label="Toggle log details">
-          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"></path></svg>
-        </button>
-        <div class="log-row-details" ${expanded ? '' : 'hidden'}>
-          <p class="log-row-detail-message">${escapeHtml(log.message)}</p>
-          <pre class="log-row-detail-trace">[${escapeHtml(fullTime)}]\n\n${escapeHtml(detailText)}</pre>
-        </div>
-      `;
+      const time = document.createElement('span');
+      time.className = 'log-time';
+      time.textContent = timeStr;
+      const status = document.createElement('span');
+      status.className = 'log-status-text';
+      status.textContent = statusLabel;
+      const body = document.createElement('div');
+      body.className = 'log-entry-body';
+      const message = document.createElement('p');
+      message.className = 'log-entry-message';
+      message.title = messageText;
+      message.textContent = messageText;
+      body.appendChild(message);
+      const openButton = document.createElement('button');
+      openButton.className = 'log-open-btn';
+      openButton.type = 'button';
+      openButton.setAttribute('aria-label', 'Toggle log details');
+      openButton.appendChild(createChevronIcon('edit'));
+      const details = document.createElement('div');
+      details.className = 'log-row-details';
+      details.hidden = !expanded;
+      const detailMessage = document.createElement('p');
+      detailMessage.className = 'log-row-detail-message';
+      detailMessage.textContent = messageText;
+      const detailTrace = document.createElement('pre');
+      detailTrace.className = 'log-row-detail-trace';
+      detailTrace.textContent = `[${fullTime}]\n\n${detailText}`;
+      details.append(detailMessage, detailTrace);
+      li.append(time, status, body, openButton, details);
 
       if (expanded) li.classList.add('expanded');
 
-      const detailEl = li.querySelector('.log-row-details');
+      const detailEl = details;
       const toggle = () => openLogDetail(log, li, detailEl);
-      li.querySelector('.log-open-btn').addEventListener('click', (event) => {
+      openButton.addEventListener('click', (event) => {
         event.stopPropagation();
         toggle();
       });
@@ -1733,16 +1753,6 @@ document.addEventListener('DOMContentLoaded', () => {
     if (selectedLogKey && !renderedLogs.some((log) => log.logKey === selectedLogKey)) {
       selectedLogKey = null;
     }
-  }
-
-  function escapeHtml(unsafe) {
-    return (unsafe || '')
-      .toString()
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#039;');
   }
 
   function normalizeLogStatus(status) {

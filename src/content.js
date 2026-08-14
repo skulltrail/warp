@@ -105,12 +105,19 @@ function showToast(text = 'Siphoning...', tone = 'info') {
 
   const toast = document.createElement('div');
   toast.id = 'warp-toast';
-  toast.innerHTML = `
-    <span class="warp-toast-mark" aria-hidden="true">
-      <img src="${chrome.runtime.getURL('assets/warp.png')}" alt="" width="20" height="20" />
-    </span>
-    <span class="warp-toast-label">${escapeHtml(text)}</span>
-  `;
+  const mark = document.createElement('span');
+  mark.className = 'warp-toast-mark';
+  mark.setAttribute('aria-hidden', 'true');
+  const markImage = document.createElement('img');
+  markImage.src = chrome.runtime.getURL('assets/warp.png');
+  markImage.alt = '';
+  markImage.width = 20;
+  markImage.height = 20;
+  mark.appendChild(markImage);
+  const label = document.createElement('span');
+  label.className = 'warp-toast-label';
+  label.textContent = text;
+  toast.append(mark, label);
 
   const toastPalette = {
     info: {
@@ -153,7 +160,6 @@ function showToast(text = 'Siphoning...', tone = 'info') {
     opacity: '0',
   });
 
-  const mark = toast.querySelector('.warp-toast-mark');
   Object.assign(mark.style, {
     width: '20px',
     height: '20px',
@@ -164,7 +170,6 @@ function showToast(text = 'Siphoning...', tone = 'info') {
     filter: 'drop-shadow(0 0 10px rgba(0, 229, 255, 0.18))',
   });
 
-  const markImage = mark.querySelector('img');
   Object.assign(markImage.style, {
     width: '20px',
     height: '20px',
@@ -172,7 +177,6 @@ function showToast(text = 'Siphoning...', tone = 'info') {
     objectFit: 'contain',
   });
 
-  const label = toast.querySelector('.warp-toast-label');
   Object.assign(label.style, {
     lineHeight: '1.3',
   });
@@ -190,16 +194,6 @@ function showToast(text = 'Siphoning...', tone = 'info') {
     toast.style.opacity = '0';
     setTimeout(() => toast.remove(), 300);
   }, 3000);
-}
-
-function escapeHtml(unsafe) {
-  return (unsafe || '')
-    .toString()
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
 }
 
 function inferSiphonKind(targetUrl, hintedFilename = '', hintedMime = '') {
